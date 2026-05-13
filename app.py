@@ -1,13 +1,16 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, redirect, session
 import sqlite3
-import os
 
 app = Flask(__name__)
+app.secret_key = "smaili_secret_key"  # مهم للأمان
 
-DB_PATH = "database.db"
+# حساب بسيط (تقدر تبدلو)
+USERNAME = "admin"
+PASSWORD = "1234"
 
+# إنشاء قاعدة البيانات
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect("database.db")
     c = conn.cursor()
     c.execute("""
     CREATE TABLE IF NOT EXISTS products (
@@ -24,10 +27,41 @@ def init_db():
 
 init_db()
 
-@app.route("/")
+# 🔐 صفحة تسجيل الدخول
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if username == USERNAME and password == PASSWORD:
+            session["user"] = username
+            return redirect("/dashboard")
+        else:
+            return "❌ معلومات خاطئة"
+
+    return """
+    <h2>Login</h2>
+    <form method="post">
+        <input name="username" placeholder="Username"><br>
+        <input name="password" type="password" placeholder="Password"><br>
+        <button type="submit">Login</button>
+    </form>
+    """
+
+# 🧠 حماية الصفحة
+def is_logged_in():
+    return "user" in session
+
+# 🏠 الصفحة الرئيسية (بعد login)
+@app.route("/dashboard")
 def home():
+    if not is_logged_in():
+        return redirect("/")
+
     return render_template_string("""
-    <h2>SMAILI POS 🚀</h2>
+    <h2>SMAILI POS</h2>
+    <a href="/logout">Logout</a>
 
     <h3>Ajouter Produit</h3>
     <input id="name_fr" placeholder="Nom FR"><br>
@@ -91,32 +125,60 @@ def home():
     </script>
     """)
 
+# 🚪 تسجيل الخروج
+@app.route("/logout")
+def logout():
+    session.pop("user", None)
+    return redirect("/")
+
+# إضافة منتج
 @app.route("/add", methods=["POST"])
 def add_product():
+    if not is_logged_in():
+        return "Unauthorized", 403
+
     data = request.json
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect("database.db")
     c = conn.cursor()
-    c.execute("INSERT INTO products VALUES (NULL,?,?,?,?,?)",
-              (data["name_fr"], data["name_ar"], data["ref"], data["price"], data["stock"]))
+    c.execute("""
+    INSERT INTO products (name_fr, name_ar, ref, price, stock)
+    VALUES (?, ?, ?, ?, ?)
+    """, (
+        data["name_fr"],
+        data["name_ar"],
+        data["ref"],
+        float(data["price"]),
+        int(data["stock"])
+    ))
     conn.commit()
     conn.close()
+
     return jsonify({"status": "ok"})
 
+# عرض المنتجات
 @app.route("/products")
 def get_products():
-    conn = sqlite3.connect(DB_PATH)
+    if not is_logged_in():
+        return "Unauthorized", 403
+
+    conn = sqlite3.connect("database.db")
     c = conn.cursor()
     c.execute("SELECT * FROM products")
     rows = c.fetchall()
     conn.close()
 
-    return jsonify([
-        {
+    data = []
+    for r in rows:
+        data.append({
             "id": r[0],
             "name_fr": r[1],
             "name_ar": r[2],
             "ref": r[3],
             "price": r[4],
             "stock": r[5]
-        } for r in rows
-    ])
+        })
+
+    return jsonify(data)
+
+if __name__ == "__main__":
+    app.run(debug=True)
